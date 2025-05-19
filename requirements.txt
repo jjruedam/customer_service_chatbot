@@ -1,0 +1,12 @@
+python-dotenv
+gradio
+langchain
+langchain_community
+langchain_openai
+openai
+pypdf
+faiss-cpu
+networkx
+matplotlib
+requests
+langfuse
