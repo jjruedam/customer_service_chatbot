@@ -38,13 +38,36 @@ default_parameters = {"user_message": {
                       }}
 
 default_node = LLM_Node(name="default_node", 
-                     description="General purpose conversation handler for non-specific queries", 
+                     description="Conversation guide for unclear requests or off-topic queries", 
                      parameters=default_parameters,
-                     template= """Respond helpfully to the user's general query. Keep your response friendly, concise, and informative. If the query seems to be about products or company policies, indicate this might not be the most specific response path.
+                     template= """Handle this user request by determining the appropriate action:
 
-If the user seems frustrated, confused, or their request can't be addressed through normal pipelines, route them to the just_chatting node.
+USER MESSAGE: "{user_message}"
 
-User message: {user_message}""",
+GUIDELINES:
+1. COMPANY FOCUS: Our chat exists to assist with product information, order management, returns, cancellations, and company policies.
+
+2. DETERMINE REQUEST TYPE:
+   - If about products/orders → Suggest shopping_chatting node
+   - If about policies → Suggest policies_questions node
+   - If about order cancellation → Suggest Cancell_Order node
+   - If genuinely unclear → Ask clarifying questions about their needs related to our services
+
+3. OFF-TOPIC HANDLING:
+   - For completely unrelated topics, politely redirect to our purpose
+   - After 2+ attempts, suggest alternative contact methods:
+     * Customer Service: 1-800-555-1234
+     * Email: support@techstream.com
+     * Store Locator: www.techstream.com/stores
+
+4. RESPONSE STRUCTURE:
+   - Be friendly but focused
+   - Keep responses under 100 words
+   - Provide 1-2 concrete examples of how we can help
+   - For repeat unclear requests, gradually introduce alternative contact methods
+
+Your goal is to guide the conversation toward productive company-related topics without appearing dismissive.
+""",
                      model = "gpt-4.1")
 Chat_Bot_ToT.conect_node_to_node(from_name="root", to_Node=default_node)
 
@@ -54,18 +77,13 @@ shopping_chatting_node = LLM_Node(name="shopping_chatting",
                      parameters=default_parameters,
                      template= """Respond to the user's product or shopping-related query using retrieved product information. Provide specific details about:
 
-1. Product features, specifications, and availability
-2. Pricing information and current promotions
-3. Product comparisons when relevant
-4. Ordering assistance and recommendations
-
 If the user seems frustrated or their request cannot be properly addressed with product information alone, route them to the just_chatting node.
 
 You can't process sales, if user express interest on buying a product  induce they to visit web, shop or call.
 
 User message: {user_message}""",
                      model = "gpt-4.1",
-                     retriver=shop_rag.get_retriver())
+                     retriver=shop_rag.get_retriver(request_type="similarity",top_k=4, score_threshold=0.6))
 Chat_Bot_ToT.conect_node_to_node(from_name="root", to_Node=shopping_chatting_node)
 
 ###--- Node ---###
@@ -74,19 +92,13 @@ policies_questions_node = LLM_Node(name="policies_questions",
                      parameters=default_parameters,
                      template= """Respond to the user's query about company policies using retrieved policy information. Address questions regarding:
 
-1. Return and exchange policies
-2. Shipping and delivery information
-3. Warranty and guarantee details
-4. Payment and pricing policies
-5. Customer account management
-
 Provide clear, accurate information based on official company policies. If the policy information is ambiguous or the user request falls outside standard policies, indicate this.
 
-If the user seems frustrated, confused, or their request requires special handling beyond standard policy responses, route them to the just_chatting node.
+If the user seems frustrated, confused, or their request requires special handling beyond standard policy responses, advice him to contact the call center and/or visit the store.
 
 User message: {user_message}""",
                      model = "gpt-4.1",
-                     retriver=policy_rag.get_retriver())
+                     retriver=policy_rag.get_retriver(request_type="similarity",top_k=3, score_threshold=0.6))
 Chat_Bot_ToT.conect_node_to_node(from_name="root", to_Node=policies_questions_node)
 
 ###--- Node ---###
@@ -97,18 +109,12 @@ just_chatting_parameters = {"user_message": {
                           "system_message": {
                           "type": "string",
                           "description": "chat bot message or error handling response"
-                        },
-                          "route_info": {
-                          "type": "string",
-                          "description": """information about which pipeline routed to this node and why as:
-                          error: cannot process, error, failed, unable to complete, technical difficulty, system error
-                          special request: speak to human, customer service, representative, this is not working, frustrated, annoying""",
                         }} 
 
 just_chatting_node = Code_Node(name="just_chatting",
-                              description="Flexible conversation handler and system recovery node for special cases",
+                              description="Flexible conversation handler",
                               parameters=just_chatting_parameters,
-                              function=chat_flexible_handler,
+                              function=just_chatting_handler,
                               is_interactive=True)
 
 Chat_Bot_ToT.conect_node_to_node(from_name="default_node", to_Node=just_chatting_node)
@@ -116,6 +122,53 @@ Chat_Bot_ToT.conect_node_to_node(from_name="shopping_chatting", to_Node=just_cha
 Chat_Bot_ToT.conect_node_to_node(from_name="policies_questions", to_Node=just_chatting_node)
 
 Chat_Bot_ToT.conect_node_to_node(from_name="just_chatting", to_Node=root)
+
+###--- Node ---###
+backup_parameters = {
+    "user_message": {
+        "type": "string",
+        "description": "The most recent message sent by the user"
+    },
+    "route_info": {
+        "type": "string",
+        "description": "Information about which pipeline routed to this node, including error details or special handling requirements"
+    },
+    "error_type": {
+        "type": "string",
+        "description": "Classification of error or special request type if identified",
+        "default": "unspecified"
+    }
+}
+
+backup_node = LLM_Node(name="backup_system", 
+                     description="Emergency response system for handling exceptions, errors, and special user situations", 
+                     parameters=backup_parameters,
+                     template= """You are an advanced exception handling specialist focused on resolving user issues when normal conversation flows break down. Your purpose is to:
+
+1. Diagnose the issue based on route information and conversation history
+2. Provide a helpful, empathetic response that addresses the user's immediate concerns
+3. Route the conversation appropriately - either back to a functional pipeline or to human assistance when necessary
+
+CURRENT SITUATION:
+- User message: "{user_message}"
+- Pipeline information: {route_info}
+- Error type (if identified): {error_type}
+
+RESPONSE GUIDELINES:
+- If the user is expressing frustration: Acknowledge their feelings, apologize sincerely, and offer a clear path forward
+- If a technical error occurred: Explain briefly what went wrong without technical jargon and suggest an alternative approach
+- If the user requests human assistance: Confirm this request and explain the next steps to connect with customer service
+- If the user is stuck in a loop: Help them break out by suggesting a different approach or topic
+- If the user wants to cancel or undo a process: Provide clear instructions on how to do so
+
+Always maintain a helpful, professional tone while acknowledging any difficulties the user has experienced. Prioritize solving their immediate problem rather than defending system limitations.
+
+IMPORTANT: Include a recommendation for how the system should proceed (return to main conversation, escalate to human support, or attempt a specific pipeline again).
+""",
+                     model = "gpt-4.1",
+                     retriver=policy_rag.get_retriver(request_type="mmr", top_k=2,lambda_mult=0.5))
+Chat_Bot_ToT.conect_node_to_node(from_name="root", to_Node=backup_node)
+Chat_Bot_ToT.conect_node_to_node(from_name="backup_system", to_Node=just_chatting_node)
 
 ### Cancel Order Pipeline ###
 
@@ -125,7 +178,6 @@ cancel_node = LLM_Node(name="Cancell_Order",
                      parameters=cancel_parameters,
                      template= cancel_node_template,
                      model = "gpt-4.1")
-                     #retriver=policy_rag.get_retriver(request_type="mmr", filter_key="Cancelation process",top_k=2, lambda_mult=0.8))
 Chat_Bot_ToT.conect_node_to_node(from_name="root", to_Node=cancel_node)
 
 ###--- Node ---###
@@ -152,7 +204,7 @@ preprocesing_code_node = LLM_Node(name="preprocesing_code",
                      template=preprocesing_code_node_template,
                      model = "gpt-4.1")
 Chat_Bot_ToT.conect_node_to_node(from_name="sending_verification_code", to_Node=preprocesing_code_node)
-Chat_Bot_ToT.conect_node_to_node(from_name="preprocesing_code", to_Node=just_chatting_node)
+Chat_Bot_ToT.conect_node_to_node(from_name="preprocesing_code", to_Node=backup_node)
 
 ###--- Node ---###
 check_verification_node = Code_Node(name="check_cancelation_request",
@@ -168,10 +220,10 @@ preprocessing_motivations_node = LLM_Node(name="preprocessing_motivations",
                      parameters=preprocessing_motivations_parameters,
                      template= preprocessing_motivations_node_template,
                      model = "gpt-4.1",
-                     retriver=policy_rag.get_retriver())
+                     retriver=policy_rag.get_retriver(request_type="mmr", filter_key="Cancelation process",top_k=2, lambda_mult=0.8))
 Chat_Bot_ToT.conect_node_to_node(from_name="check_cancelation_request", to_Node=preprocessing_motivations_node)
 Chat_Bot_ToT.conect_node_to_node(from_name="preprocessing_motivations", to_Node=check_verification_node)
-Chat_Bot_ToT.conect_node_to_node(from_name="preprocessing_motivations", to_Node=just_chatting_node)
+Chat_Bot_ToT.conect_node_to_node(from_name="preprocessing_motivations", to_Node=backup_node)
 
 ###--- Node ---### ## Output Node
 finilizing_cancelation_node = Code_Node(name="finilizing_cancelation",
@@ -223,7 +275,7 @@ status_processing_node = LLM_Node(name="status_processing",
                      template=status_processing_template,
                      model = "gpt-4.1")
 Chat_Bot_ToT.conect_node_to_node(from_name="status_check", to_Node=status_processing_node)
-Chat_Bot_ToT.conect_node_to_node(from_name="status_processing", to_Node=just_chatting_node)
+Chat_Bot_ToT.conect_node_to_node(from_name="status_processing", to_Node=backup_node)
 
 ###--- Node ---###
 status_explanation_node = Code_Node(name="status_explanation",
@@ -239,9 +291,9 @@ notification_preference_node = LLM_Node(name="notification_preference",
                      parameters=notification_preference_parameters,
                      template=notification_preference_template,
                      model = "gpt-4.1",
-                     retriver=policy_rag.get_retriver())
+                     retriver=policy_rag.get_retriver(request_type="mmr", filter_key="Tracking",top_k=2, lambda_mult=0.8))
 Chat_Bot_ToT.conect_node_to_node(from_name="status_explanation", to_Node=notification_preference_node)
-Chat_Bot_ToT.conect_node_to_node(from_name="notification_preference", to_Node=just_chatting_node)
+Chat_Bot_ToT.conect_node_to_node(from_name="notification_preference", to_Node=backup_node)
 
 ###--- Node ---### ## Output Node
 update_notifications_node = Code_Node(name="update_notifications",

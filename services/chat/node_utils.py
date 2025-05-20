@@ -61,46 +61,8 @@ def chat_tracking_info(arg, childs_tools, trase=True):
     # Implementation would analyze the message and return appropriate tracking details
     return childs_tools[0]["function"]["name"], arg["system_message"], get_order_details(arg["order_id"])
 
-def chat_flexible_handler(arg, childs_tools, trase=True):
+def just_chatting_handler(arg, childs_tools, trase=True):
     """
-    Handles flexible conversation scenarios including:
-    1. Normal conversation continuation
-    2. Error recovery from other pipelines
-    3. Special request handling
-    4. System reset when needed
+    Handles just chatting loop
     """
-    user_message = arg.get("user_message", "")
-    system_message = arg.get("system_message", "")
-    route_info = arg.get("route_info", "default")
-    
-    # Error detection keywords
-    error_indicators = ["cannot process", "error", "failed", "unable to complete", 
-                        "technical difficulty", "system error"]
-    
-    # Check if coming from error condition
-    is_error_recovery = any(indicator in system_message.lower() for indicator in error_indicators)
-    
-    # Check for special requests or frustration indicators
-    special_request_indicators = ["speak to human", "customer service", "representative", 
-                                 "this is not working", "frustrated", "annoying"]
-    needs_special_handling = any(indicator in user_message.lower() for indicator in special_request_indicators)
-    
-    # Determine appropriate response
-    if is_error_recovery:
-        response = {
-            "system_message": "I apologize for the difficulty. Let's start over. How can I assist you today?",
-            "reset_to_root": True
-        }
-    elif needs_special_handling:
-        response = {
-            "system_message": "I understand this may be frustrating. Would you like me to connect you with customer service? In the meantime, I'm happy to try addressing your concerns differently.",
-            "reset_to_root": False
-        }
-    else:
-        # Normal conversation flow
-        response = {
-            "system_message": system_message,
-            "reset_to_root": False
-        }
-    
-    return childs_tools[0]["function"]["name"], response["system_message"], response
+    return childs_tools[0]["function"]["name"], arg["system_message"], {}

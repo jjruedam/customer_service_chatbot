@@ -83,6 +83,22 @@ class Node():
 class LLM_Node(Node):
     def __init__(self,name, description, parameters, template, model:str, required=[], retriver=None):
         super().__init__(name, description, parameters, required)
+
+        if name == "backup_system":
+            # Check for exact keys
+            valid_backup_system = True
+            required_keys = {"user_message", "route_info", "error_type"}
+            if set(parameters.keys()) != required_keys:
+                valid_backup_system= False
+            
+            # Check types
+            valid_backup_system= (parameters["user_message"]["type"] == "string" and 
+                    parameters["route_info"]["type"] == "string" and 
+                    parameters["error_type"]["type"] == "string")
+            
+            if not valid_backup_system:
+                raise ValueError("A backup_system node must have only 'user_message', 'route_info', 'error_type' keys (strings)")
+
         self.template = template
         self.__model = model
         self.retriver = retriver
@@ -146,6 +162,10 @@ class LLM_Node(Node):
 class Code_Node(Node):
     def __init__(self,name, description, parameters, function:callable, required=[], is_interactive=False):
         super().__init__(name, description, parameters, required)
+
+        if name == "backup_system":
+            raise ValueError("backup_system node must be a LLM_Node. Review Documentation")
+
         self.core_function = function
         self.is_interactive_node = is_interactive
     def call(self, arg, history, trase=True, sys_callback = {}):
@@ -221,8 +241,15 @@ class ChatToT():
                     if retry_count >= max_retries:
                         print(f"Maximum retries reached for node {current_node_name}")
                         
+                        # Call backup_system node if system has one
+                        if "backup_system" in self.__graph.keys():
+                            current_node_name = "backup_system"
+                            arg = {
+                                "user_message":  str(arg),
+                                "route_info":  f"Error in node {current_node_name}: {self.__graph[current_node_name]["node"].corpus["function"]["description"]}",
+                                "error_type": str(e)}
                         # Go back one step in the execution path if possible
-                        if len(execution_path) > 1:
+                        elif len(execution_path) > 1:
                             execution_path.pop()  # Remove current failed node
                             current_node_name = execution_path[-1]  # Go back to previous node
                             print(f"Retrying from previous node: {current_node_name}")
@@ -332,24 +359,3 @@ class ChatToT():
             plt.tight_layout()
             
             return fig
-
-
-# state_0 Analysing request (Consistency supported) -> [0_1, N and RAG]
-
-# state_0_1 requesting user relevant data -> [0]
-
-# state_N requesting API relevant data -> [N_1]
-"""
-1: Cancel Order
-2: Track Order
-3: Backup quest
-"""
-
-# state_RAG  
-"""Retrive Augment Generation"""
-
-# state_reponse
-
-
-
-
