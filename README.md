@@ -49,176 +49,6 @@ The Chat Tree of Thoughts (ChatToT) framework offers significant benefits:
 ## Use Cases
 
 - **Order Cancellation Assistant**: 
-  - Validates eligibility per policy 
-  - Processes cancellation through API interactions
-  - Provides appropriate support and confirmation
-  
-- **Order Tracking Support**:
-  - Retrieves order status from backend systems
-  - Formats tracking information in user-friendly responses
-  
-- **Policy Question Resolution**:
-  - Uses RAG to answer questions about company policies // or shopping
-  - Ensures accurate and consistent policy application
-
-## Getting Started
-
-### Prerequisites
-
-```
-# Requirements listed in requirements.txt
-langchain_community
-langchain_openai
-openai
-pypdf
-faiss-cpu
-networkx
-matplotlib
-requests
-langfuse
-```
-
-### Installation
-
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Set up environment variables in `.env` with:
-
-    - OPENAI_API_KEY 
-    - LANGFUSE_SECRET_KEY
-    - LANGFUSE_PUBLIC_KEY
-    - LANGFUSE_HOST
-
-### Running the Application
-
-1. Start the mock API service:
-```bash
-python API_main.py
-```
-
-2. In a separate terminal, start the chatbot service:
-```bash
-python main.py
-```
-
-## Project Structure
-
-```
-CUSTOMER_SERVICE_CHATBOT/
-├── demo_front_page/
-├── services/
-│   ├── chat/                   # Core chatbot service
-│   │   ├── _pycache_/
-│   │   ├── prompts/
-│   │   ├── api_requests.py
-│   │   ├── chat_ToT.py         # Main ChatToT implementation
-│   │   ├── node_utils.py
-│   │   └── policies_chat.py
-│   ├── mock_API/               # API simulation
-│   │   ├── _pycache_/
-│   │   ├── data_mocking.py
-│   │   ├── data_models.py
-│   │   └── endpoints.py
-│   └── RAG_support/            # Retrieval Augmented Generation
-│       ├── _pycache_/
-│       ├── csv_files/
-│       ├── pdf_files/
-│       └── RAG_processor.py
-├── .env                        # Environment variables
-├── API_main.py                 # API service entry point
-├── main.py                     # Main application entry point
-├── my_graph.png                # Visualization of ChatToT graph
-└── requirements.txt
-```
-
-## Experiment & Evaluation
-
-### Human Feedback
-The most direct form to evaluate this kind of system is human supervision. To support this, trace collection is implemented using Langfuse, providing detailed insight into pipeline execution and decision-making.
-Metrics
-
-    - Input-Output Fitting: Customer satisfaction metric measuring how well responses address user needs
-    - Latency: Response time measurements across different request types
-    - Token Counting: Usage analytics and model pricing (unfortunately the most recent Langfuse version doesn`t support GPT-4.1 models)
-    - Feature Tagging: Tracking which capabilities are used (e.g., retrieval operations)
-
-### Future Enhancements
-Although not yet implemented, the following approaches would improve evaluation:
-
-#### Synthetic Chatting: 
-Development of a module to generate a high variety of synthetic interactions to:
-
-    - Debug system robustness
-    - Identify system errors and weak nodes
-    - Test edge cases and unexpected messages
-    - Validate backup systems
-    - Reduce manual testing time by enabling direct evaluation of traces and terminal feedback
-
-
-#### Pricing Optimization via Backpropagation Model Switching:
-
-    - The system is currently tested with GPT-4.1, which works satisfactorily for this MVP
-    - In the future, we could substitute human supervision with GPT-4.1 automatic evaluation over smaller models
-    - This would reduce costs by identifying which nodes can use more efficient models without compromising quality
-    - Evaluation would start at leaf nodes and walk back up the tree, replacing models where less expensive ones work well
-
-
-#### NER Implementation:
-
-    - Add Named Entity Recognition for additional tagging
-    - Detect generation patterns and improve response customization
-
-# Customer Service Chatbot
-
-A high-performance generative chatbot solution designed to handle customer service inquiries following company policies while interfacing with backend APIs.
-
-## Project Overview
-
-This project implements a fully generative chatbot that utilizes Large Language Models (LLMs) to formulate responses while adhering to company policies. The solution integrates with specific API endpoints and follows a modular architecture for flexibility and maintainability.
-
-### Key Features
-
-- **LLM-powered conversational interface** that understands natural language requests
-- **API integration** for order cancellation and tracking
-- **Policy enforcement** to ensure responses follow company guidelines
-- **Tree of Thoughts decision-making** for structured handling of complex queries
-- **Retrieval-Augmented Generation (RAG)** support for knowledge-based responses
-
-## Architecture
-
-### Core Components
-
-- **ChatToT (Chat Tree of Thoughts)**: 
-  The central framework enabling flexible pipeline construction that combines LLM decision-making with deterministic code execution.
-  
-- **LLM Nodes**:
-  Specialized components that handle natural language processing, making decisions, and generating user-facing content.
-  
-- **Code Nodes**:
-  Python functions integrated into the processing pipeline for executing business logic, API calls, and data transformations.
-  
-- **RAG Support**:
-  Infrastructure for retrieving and leveraging information from policy documents and knowledge bases.
-
-### Services
-
-- **`chat/`**: CORE service powering the conversational abilities based on the ChatToT class
-- **`mock_API/`**: Simulated API endpoints for testing and development
-- **`RAG_support/`**: Services that provide document retrieval and context augmentation
-
-## ChatToT Advantages
-
-The Chat Tree of Thoughts (ChatToT) framework offers significant benefits:
-
-1. **Flexible Pipeline Construction**: Easily combine LLM and code nodes in any configuration
-2. **No Reasoning Overhead**: Leverages LLM strengths like one-shot decisions and low latency
-3. **Data Processing**: Efficiently extracts and transforms data between pipeline stages
-4. **Deterministic Decision Paths**: Ensures predictable handling of user requests
-5. **RAG Integration**: Seamlessly incorporates knowledge from policy documents where needed
-
-## Use Cases
-
-- **Order Cancellation Assistant**: 
   - Validates eligibility per policy (orders < 10 days old)
   - Processes cancellation through API
   - Provides appropriate confirmations or alternatives
@@ -349,6 +179,7 @@ llm_based_node = LLM_Node(
 1. No LLM node is interactive - it must have a Code child to send system messages
 2. Use `user_message` and `system_message` variables for chatting interactions
 3. LLM_Node class has a fixed `self.sys_prompt` to guide chat behavior, leveraging OpenAI API cache for reduced latency and consumption
+4. All OpenAI API calls include chat history by default
 
 #### Code Nodes
 ```python
@@ -374,7 +205,7 @@ code_based_node = Code_Node(
 4. Output must provide Next_Node_name and Message (both strings)
 5. Interactive nodes must have exactly one child, and their core function must return an additional parameter (dict) with necessary retrieval data
 6. No loop pipelines should end with a non-interactive Code_Node (no children) - all finished pipelines return to the root
-7. A backup `just_chatting` node manages unexpected behaviors in pipelines
+7. A backup `backup_system` node manages unexpected behaviors in pipelines
 
 #### RAG Implementation
 ```python
@@ -396,6 +227,15 @@ document_rag.get_retriver()          # Create retriever object for pipelines
 - `conect_node_to_node(from_name:str, to_Node:Node)` establishes node connections
 - `run_from(message, history, image, from_node_name=None, trase=True, max_retries=3)` executes the tree
 - `visualize_graph()` generates a visualization of tree nodes and edges
+- The class has a reserved special node name `backup_system` for system exceptions. It must be an LLM_Node which will receive the argument schema below, but how it processes this data is customizable:
+
+```python
+{
+  "user_message": "string of node arguments including last user message",
+  "route_info": f"Error in node {current_node_name}: {current_node_description}",
+  "error_type": "Exception string"
+}
+```
 
 ### Future Enhancements
 

@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 import re
 import json
+import base64
 from abc import ABC, abstractmethod
 from langfuse import Langfuse
 from langfuse.decorators import langfuse_context, observe
@@ -74,6 +75,7 @@ class Node():
         # Interactive nodes: Code_Nodes only for graph-customers interactions
         self.is_interactive_node = False
 
+    #Method to call node in graph execution
     @abstractmethod
     def call(self):
         pass
@@ -115,7 +117,7 @@ class LLM_Node(Node):
 
                 Your core function is resolving customer inquiries efficiently while creating positive experiences. Specific product details and company policies will be provided separately."""
     @observe()                    
-    def call(self, arg, history, trase=True, sys_callback = {}):
+    def call(self, arg, history, trase=True, sys_data = {}):
         request = self.template.format(**arg)
         is_retrieved = False
         if self.retriver:
@@ -129,8 +131,8 @@ class LLM_Node(Node):
         else:
             inner_template = self.sys_prompt
 
-        if sys_callback:
-            request = f"If and only if it is necessary include System data/Order details: {sys_callback}\n\n" + request
+        if sys_data:
+            request = f"If and only if it is necessary include System data/Order details: {sys_data}\n\n" + request
 
         messages = [{"role": "system", "content": inner_template}] + history + [{"role": "user", "content": request}]
 
@@ -168,23 +170,34 @@ class Code_Node(Node):
 
         self.core_function = function
         self.is_interactive_node = is_interactive
-    def call(self, arg, history, trase=True, sys_callback = {}):
+    def call(self, arg, history, trase=True, sys_data = {}):
         if self.is_interactive_node and not self.childs_tools:
             raise ValueError(f"Interactive nodes, as {self.corpus["function"]["name"]}, must have one and only one connection")
         return self.core_function(arg, trase=trase, childs_tools=self.childs_tools)
+
+class Image_to_text_Node(Node):
+    def __init__(self, name, description, parameters, required=[]):
+        super().__init__(name, description, parameters, required)
+
+    def call(self, arg, history, trase=True, sys_data = {}):
+        return 
 
 ### Chat Tree of Thoghts ###
 class ChatToT():
     def __init__(self, root:Node):
         self.root_name = root.corpus["function"]["name"]
         self.__graph ={self.root_name:{"node":root, "childs":[]}}
-        self.__inner_callbacks = {}
+        self.__sys_data = {}
 
     def conect_node_to_node(self, from_name:str, to_Node:Node):
+
+        # Load parent node graph representation
         from_node_rep = self.__graph[from_name]
 
+        # Check interactive nodes has only one child
         if from_node_rep["node"].is_interactive_node and from_node_rep["childs"]:
             raise TypeError(f"Interactive nodes, as {from_name}, must have one and only one connection")
+        # Update graph connections if it don't already exist
         if to_Node.corpus["function"]["name"] not in from_node_rep["childs"]:
             from_node_rep["node"].childs_tools.append(to_Node.corpus)
             from_node_rep["childs"].append(to_Node.corpus["function"]["name"])
@@ -221,15 +234,15 @@ class ChatToT():
                     current_node = self.__graph[current_node_name]["node"]
                     
                     if current_node.is_interactive_node:
-                        next_node_name, arg, callback= current_node.call(arg, history, trase=trase, sys_callback = self.__inner_callbacks)
-                        self.__inner_callbacks = callback
+                        next_node_name, arg, callback= current_node.call(arg, history, trase=trase, sys_data = self.__sys_data)
+                        self.__sys_data |= callback
                         success = True
                         # For interactive nodes, we break the main loop after successful execution
                         if success:
                             current_node_name = next_node_name
                             break
                     else:
-                        next_node_name, arg = current_node.call(arg, history, trase=trase, sys_callback = self.__inner_callbacks)
+                        next_node_name, arg = current_node.call(arg, history, trase=trase, sys_data = self.__sys_data)
                         success = True
                         if success:
                             current_node_name = next_node_name
@@ -264,7 +277,7 @@ class ChatToT():
 
         # Clear callbacks in output nodes 
         if current_node_name == "":
-            self.__inner_callbacks = {}
+            self.__sys_data = {}
 
         return current_node_name, arg
     
