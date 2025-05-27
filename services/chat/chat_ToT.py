@@ -8,6 +8,7 @@ import base64
 from abc import ABC, abstractmethod
 from langfuse import Langfuse
 from langfuse.decorators import langfuse_context, observe
+from services.image_to_text.product_processor import Image_Analyzer
 
 """langfuse = Langfuse(
   secret_key="sk-lf-5be7ebc4-7576-4267-aee9-3ba43a84dac5",
@@ -175,12 +176,37 @@ class Code_Node(Node):
             raise ValueError(f"Interactive nodes, as {self.corpus["function"]["name"]}, must have one and only one connection")
         return self.core_function(arg, trase=trase, childs_tools=self.childs_tools)
 
-class Image_to_text_Node(Node):
-    def __init__(self, name, description, parameters, required=[]):
+class Image_to_Text_Node(Node):
+    def __init__(self, name, description, parameters, model:str, yolo_model= "yolov8n.pt",required=[]):
         super().__init__(name, description, parameters, required)
+        self.image_analyzer = Image_Analyzer(
+            openai_api_key=os.environ['OPENAI_API_KEY'],
+            fundational_model= model,
+            yolo_model_path=yolo_model  # Will download automatically if not present
+        )
 
     def call(self, arg, history, trase=True, sys_data = {}):
-        return 
+        image_analysis = self.image_analyzer.analyze_product(arg["image"])
+
+        if 'gpt_analysis' not in image_analysis:
+            return image_analysis['description']
+        
+        # Processed Image
+        main_product_details = image_analysis['preprocessing_results']['detected_objects'][image_analysis['preprocessing_results']['main_product_id']]
+        gpt_analysis = image_analysis['gpt_analysis']
+
+        ## Product
+        product_detected = main_product_details['class']
+        product_confidence = main_product_details['confidence']
+
+        ## Condition
+        condition = gpt_analysis["condition"]
+        confidence = gpt_analysis["confidence"]
+        description = gpt_analysis["description"]
+        defects_found = gpt_analysis["defects_found"]
+        overall_assessment = gpt_analysis["overall_assessment"]
+
+        return image_analysis
 
 ### Chat Tree of Thoghts ###
 class ChatToT():

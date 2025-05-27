@@ -10,8 +10,8 @@ from typing import Dict, List, Tuple, Optional
 import json
 import time
 
-class HybridProductAnalyzer:
-    def __init__(self, openai_api_key: str, yolo_model_path: str = "yolov8n.pt"):
+class Image_Analyzer:
+    def __init__(self, openai_api_key: str, fundational_model = "gpt-4.1", yolo_model_path: str = "yolov8n.pt"):
         """
         Initialize the hybrid analyzer with local CV models and OpenAI API
         
@@ -22,6 +22,7 @@ class HybridProductAnalyzer:
         self.client = openai.OpenAI(api_key=openai_api_key)
         self.yolo_model = YOLO(yolo_model_path)
         self.confidence_threshold = 0.5
+        self.fundational_model = fundational_model
         
     def preprocess_image(self, image_path: str) -> Dict:
         """
@@ -36,7 +37,8 @@ class HybridProductAnalyzer:
             'image_size': image.shape[:2],
             'detected_objects': [],
             'image_quality_metrics': {},
-            'cropped_product': None
+            'cropped_product': None,
+            'main_product_id': None
         }
         
         # 1. Object Detection with YOLO
@@ -52,6 +54,7 @@ class HybridProductAnalyzer:
             if boxes is not None:
                 for box in boxes:
                     conf = float(box.conf[0])
+                    i=0
                     if conf > self.confidence_threshold:
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
                         class_id = int(box.cls[0])
@@ -70,6 +73,8 @@ class HybridProductAnalyzer:
                             max_confidence = conf
                             main_product_box_area = obj_info['area']
                             main_product_box = [x1, y1, x2, y2]
+                            preprocessing_results['main_product_id'] = i
+                        i+=1
         
         # 2. Crop main product if detected
         if main_product_box:
@@ -94,19 +99,21 @@ class HybridProductAnalyzer:
         # Brightness and contrast
         brightness = np.mean(gray)
         contrast = np.std(gray)
+        relative_area = main_product_box_area/(image.shape[1]*image.shape[0])
         
         preprocessing_results['image_quality_metrics'] = {
             'is_blurry': blur_score < 100,  # Threshold for blur detection
             'is_too_dark': brightness < 50,
             'is_too_bright': brightness > 200,
-            'bad_framed':main_product_box_area/(image.shape[1]*image.shape[0]) > 0.6
+            'bad_framed': relative_area > 0.95,
+            'no_clear' : relative_area < 0.5
         }
         
         return preprocessing_results
     
     
     def encode_image_to_base64(self, image: np.ndarray) -> str:
-        """Convert numpy array image to base64 string for GPT-4 Vision"""
+        """Convert numpy array image to base64 string for GPT"""
         if len(image.shape) == 3:
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         else:
@@ -117,9 +124,9 @@ class HybridProductAnalyzer:
         pil_image.save(buffer, format="JPEG", quality=95)
         return base64.b64encode(buffer.getvalue()).decode()
     
-    def analyze_with_gpt4_vision(self, preprocessing_results: Dict) -> Dict:
+    def analyze_with_gpt(self, preprocessing_results: Dict) -> Dict:
         """
-        Send preprocessed information and image to GPT-4 Vision for detailed analysis
+        Send preprocessed information and image to GPT Vision for detailed analysis
         """
         # Use cropped product if available, otherwise full image
         if preprocessing_results['cropped_product'] is not None:
@@ -135,7 +142,7 @@ class HybridProductAnalyzer:
         # Create context from preprocessing
         preprocessing_context = self._create_preprocessing_context(preprocessing_results)
         
-        # GPT-4 Vision prompt
+        # GPT prompt
         prompt = f"""
 You are an expert product condition assessor. Analyze this {context} and provide a detailed assessment.
 
@@ -155,8 +162,7 @@ Please provide a JSON response with the following structure:
             "description": "detailed description of the defect"
         }}
     ],
-    "overall_assessment": "Brief summary of why this condition was assigned",
-    "recommended_action": "keep|repair|replace|sell_as_damaged"
+    "overall_assessment": "Brief summary of why this condition was assigned"
 }}
 
 Focus on:
@@ -168,7 +174,7 @@ Focus on:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4.1",
+                model=self.fundational_model,
                 messages=[
                     {
                         "role": "user",
@@ -188,19 +194,19 @@ Focus on:
                 temperature=0.1  # Low temperature for consistent analysis
             )
             
-            # Parse GPT-4 response
+            # Parse GPT response
             gpt_analysis = json.loads(response.choices[0].message.content)
             
             return {
                 'gpt_analysis': gpt_analysis,
                 'preprocessing_results': preprocessing_results,
                 'analysis_timestamp': time.time(),
-                'model_used': 'gpt-4-vision-preview'
+                'model_used': self.fundational_model
             }
             
         except Exception as e:
             return {
-                'error': f"GPT-4 Vision analysis failed: {str(e)}",
+                'error': f"GPT analysis failed: {str(e)}",
                 'preprocessing_results': preprocessing_results,
                 'fallback_condition': self._fallback_condition_assessment(e)
             }
@@ -215,26 +221,16 @@ Focus on:
                       for obj in results['detected_objects']]
             context_parts.append(f"Detected objects: {', '.join(objects)}")
         
-        # Image quality
-        quality = results['image_quality_metrics']
-        quality_issues = []
-        if quality.get('is_blurry'): quality_issues.append("blurry")
-        if quality.get('is_too_dark'): quality_issues.append("too dark")
-        if quality.get('is_too_bright'): quality_issues.append("too bright")
-        
-        if quality_issues:
-            context_parts.append(f"Image quality issues: {', '.join(quality_issues)}")
-        
         return "\n".join(context_parts) if context_parts else "No specific issues detected in preprocessing"
     
     def _fallback_condition_assessment(self, error) -> Dict:
-        """Simple fallback assessment if GPT-4 fails"""
+        """Simple fallback assessment if GPT fails"""
         
         return {
             'condition': "unidentify",
             'confidence': 0,  
             'description': str(error),
-            'note': 'This is a fallback assessment due to GPT-4 Vision API failure'
+            'note': 'This is a fallback assessment due to GPT Vision API failure'
         }
     
     def analyze_product(self, image_path: str) -> Dict:
@@ -256,9 +252,9 @@ Focus on:
                 'note': 'This is a fallback assessment due to image bad quality'
             }
         
-        # Step 2: GPT-4 Vision analysis
+        # Step 2: GPT analysis
         print("2. Analyzing with GPT Vision...")
-        final_results = self.analyze_with_gpt4_vision(preprocessing_results)
+        final_results = self.analyze_with_gpt(preprocessing_results)
         
         print("Analysis complete!")
         return final_results
@@ -273,7 +269,8 @@ Focus on:
             'is_blurry': "The image appears to be blurry or out of focus",
             'is_too_dark': "The image is too dark and lacks sufficient lighting",
             'is_too_bright': "The image is overexposed or too bright",
-            'bad_framed': "The main product takes up too much of the frame"
+            'bad_framed': "The main product takes up too much of the frame",
+            'no_clear': "The main product is no clearly framed"
         }
         
         # Define suggestions for each issue
@@ -281,7 +278,8 @@ Focus on:
             'is_blurry': "Try taking a sharper photo with better focus",
             'is_too_dark': "Please take the photo in better lighting conditions",
             'is_too_bright': "Reduce the lighting or avoid direct flash",
-            'bad_framed': "Step back to include more background around the product"
+            'bad_framed': "Step back to include more background around the product",
+            'no_clear': "Make sure that the product takes up most of the screen"
         }
         
         # Collect active quality issues
@@ -316,16 +314,19 @@ Focus on:
 if __name__ == "__main__":
     import os
     # Initialize analyzer
-    analyzer = HybridProductAnalyzer(
+    analyzer = Image_Analyzer(
         openai_api_key=os.environ['OPENAI_API_KEY'],
+        fundational_model= "gpt-4.1",
         yolo_model_path="yolov8n.pt"  # Will download automatically if not present
     )
     
-    pictures = ["bad_framed_laptop.png", "blurry_laptop.png", "bright_laptop.png",
-                "obscure_laptop.png", "chrased_laptop.jpg", "laptop.jpg"]
+    pictures = ["laptop.jpg", "bad_framed_laptop.png", "blurry_laptop.png", "bright_laptop.png",
+                "obscure_laptop.png", "chrased_laptop.jpg"]
 
     for pic in pictures:
         # Analyze a product image
+        print("\n\n")
+        print(pic)
         results = analyzer.analyze_product("services\image_to_text\\testing_images\{}".format(pic))
         
         # Print results
